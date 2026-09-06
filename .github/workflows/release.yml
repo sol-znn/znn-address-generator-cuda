@@ -1,0 +1,107 @@
+name: Release
+
+# GitHub-hosted runners have no NVIDIA GPU, so this pipeline can only compile
+# the CUDA kernels -- it cannot run them (no --selftest, no --bench). Run
+# --selftest on your own GPU after downloading a release to confirm it's
+# correct on your hardware.
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  # Keep in sync across jobs; must be a version Jimver/cuda-toolkit publishes
+  # links for (see https://github.com/Jimver/cuda-toolkit#readme).
+  CUDA_VERSION: "13.2.0"
+
+jobs:
+  build:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - os: windows-latest
+            name: znn-address-generator-cuda-windows-amd64.exe
+          - os: ubuntu-latest
+            name: znn-address-generator-cuda-linux-amd64
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install CUDA Toolkit
+        uses: Jimver/cuda-toolkit@v0.2.36
+        id: cuda-toolkit
+        with:
+          cuda: ${{ env.CUDA_VERSION }}
+          method: "local"
+          log-file-suffix: "${{ matrix.os }}.txt"
+
+      - name: Setup MSVC
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Build
+        shell: bash
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+
+          # A fat binary: one SASS image per architecture from Turing (the
+          # oldest this CUDA toolkit still targets) through Blackwell, plus a
+          # PTX image so newer GPUs still run via JIT. Match the archs in
+          # `nvcc --list-gpu-arch` for the toolkit version above.
+          GENCODE=(
+            -gencode arch=compute_75,code=sm_75
+            -gencode arch=compute_80,code=sm_80
+            -gencode arch=compute_86,code=sm_86
+            -gencode arch=compute_89,code=sm_89
+            -gencode arch=compute_90,code=sm_90
+            -gencode arch=compute_100,code=sm_100
+            -gencode arch=compute_120,code=sm_120
+            -gencode arch=compute_120,code=compute_120
+          )
+
+          nvcc -O3 -std=c++17 "${GENCODE[@]}" -DZNN_VERSION="\"${VERSION}\"" \
+            -o "${{ matrix.name }}" main.cu
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.name }}
+          path: ${{ matrix.name }}
+
+  release:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+      - name: Fix executable permissions
+        run: |
+          cd artifacts
+          for f in *; do
+            case "$f" in
+              *.exe) ;;
+              *) chmod +x "$f" ;;
+            esac
+          done
+      - name: Generate checksums
+        run: |
+          cd artifacts
+          sha256sum * > SHA256SUMS.txt
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/*
+          generate_release_notes: true

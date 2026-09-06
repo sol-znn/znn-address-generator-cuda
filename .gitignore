@@ -1,0 +1,20 @@
+# Compiled binaries
+znn-address-generator-cuda
+znn-address-generator-cuda.exe
+test_*.exe
+*.exe
+*.exp
+*.lib
+*.obj
+*.pdb
+
+# CMake build directories
+build/
+build_*/
+
+# Generated mnemonics and addresses
+results/
+
+# Editors
+.idea/
+.vscode/
