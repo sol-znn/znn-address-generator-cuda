@@ -28,8 +28,13 @@ jobs:
         include:
           - os: windows-latest
             name: znn-address-generator-cuda-windows-amd64.exe
+            # Windows' cudart package bundles headers + import libs together.
+            subPackages: '["nvcc", "cudart"]'
           - os: ubuntu-latest
             name: znn-address-generator-cuda-linux-amd64
+            # Linux splits the runtime (cudart) from its headers/static libs
+            # (cudart-dev), which nvcc needs to compile against <cuda_runtime.h>.
+            subPackages: '["nvcc", "cudart", "cudart-dev"]'
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -39,7 +44,11 @@ jobs:
         id: cuda-toolkit
         with:
           cuda: ${{ env.CUDA_VERSION }}
-          method: "local"
+          method: "network"
+          # 'local' downloads the entire toolkit + samples (4+ GB) and blows
+          # past the runner's free disk space; we only need the compiler and
+          # the runtime headers/libs nvcc links against.
+          sub-packages: ${{ matrix.subPackages }}
           log-file-suffix: "${{ matrix.os }}.txt"
 
       - name: Setup MSVC
